@@ -1,0 +1,11 @@
+3 X 9  X X X  1 4 X
+X X 1  X 8 4  X 5 X
+X X X  X 6 X  X X X
+
+X X X  3 X X  X 2 X
+X X 4  6 X X  X X X
+9 X X  X 4 2  X X 8
+
+X X X  2 X X  X X X
+X 7 X  X X X  X X 9
+X X 3  X 1 5  X 8 X
