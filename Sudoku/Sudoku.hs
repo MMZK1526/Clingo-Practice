@@ -15,7 +15,6 @@ import           System.Directory
 import           System.Environment
 import           System.Exit
 import           System.IO
-import           System.IO.Error
 import           System.Process
 import qualified Text.Read as R
 
@@ -99,7 +98,7 @@ main = void . runExceptT . handleErr $ do
         Just n  -> lift . appendFile file
                   $ concat ["grid(", intercalate "," (show <$> [r, c, n]), ")."]
       (exitCode, result, err) <- lift $ readProcessWithExitCode "clingo3" [file] ""
-      -- lift $ removeFile file
+      lift $ removeFile file
       case exitCode of
         ExitSuccess   -> except $ Left err
         ExitFailure n -> case isSat n of
