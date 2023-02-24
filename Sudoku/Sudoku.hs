@@ -96,7 +96,7 @@ main = void . runExceptT . handleErr $ do
       forM_ (assocs board) $ \((r, c), mN) -> case mN of
         Nothing -> pure ()
         Just n  -> lift . appendFile file
-                  $ concat ["grid(", intercalate "," (show <$> [r, c, n]), ")."]
+                 $ concat ["grid(", intercalate "," (show <$> [r, c, n]), ")."]
       (exitCode, result, err) <- lift $ readProcessWithExitCode "clingo3" [file] ""
       lift $ removeFile file
       case exitCode of
