@@ -16,6 +16,7 @@ import           System.Environment
 import           System.Exit
 import           System.IO
 import           System.Process
+import           System.Random
 import qualified Text.Read as R
 
 newtype Board = Board (Array (Int, Int) (Maybe Int))
@@ -33,6 +34,63 @@ instance Show Board where
             | c > 1                     = " "
             | otherwise                 = ""
 
+mkRandomBoard :: StdGen -> Board
+mkRandomBoard gen = Board $ runST $ do
+  arrST <- newArray ((1, 1), (9, 9)) Nothing :: ST s (STArray s (Int, Int) (Maybe Int))
+  let worker gen n = do
+        let (pos, gen') = randomR ((1, 1), (9, 9)) gen
+        writeArray arrST pos (Just n)
+        return gen'
+  foldM_ worker gen [1..9]
+  freeze arrST
+
+main :: IO ()
+main = void . runExceptT . handleErr $ do
+  args <- lift getArgs
+  case args of
+    []      -> throwE "Please provide the Sudoku input!"
+    src : _ -> do
+      str     <- lift $ readFile src
+      board   <- except $ parseBoard str
+      mResult <- solve board
+      lift $ case mResult of
+        Nothing     -> putStrLn "No solution!"
+        Just result -> print result
+
+genPuzzle :: StdGen -> ExceptT String IO (Maybe Board)
+genPuzzle gen = do
+  let startBoard = mkRandomBoard gen
+  mSolution <- solve startBoard
+  case mSolution of
+    Nothing       -> except $ Left "Generation failed due to unknown error."
+    Just solution -> do
+      let initPoz    = [(x, y) | x <- [1..9], y <- [1..9]]
+      return $ Just solution
+
+callClingo3 :: Board -> [String] -> ExceptT String IO [String]
+callClingo3 (Board board) opts = do
+  (file, handle) <- lift $ openTempFile "./" "mmzk"
+  lift $ hClose handle
+  lift $ writeFile file base
+  forM_ (assocs board) $ \((r, c), mN) -> case mN of
+    Nothing -> pure ()
+    Just n  -> lift . appendFile file
+              $ concat ["grid(", intercalate "," (show <$> [r, c, n]), ")."]
+  (exitCode, result, err) <- lift $ readProcessWithExitCode "clingo3" (file : opts) ""
+  lift $ removeFile file
+  case exitCode of
+    ExitSuccess   -> except $ Left err
+    ExitFailure n -> case isSat n of
+      Nothing -> except $ Left err
+      Just _  -> return $ splitOn "SATISFIABLE" result
+
+solve :: Board -> ExceptT String IO (Maybe Board)
+solve board = do
+  results <- callClingo3 board []
+  return $ case results of
+    []           -> Nothing
+    solution : _ -> Just (buildBoard $ parseResult solution)
+
 base :: String
 base = "numero(1..9).\n\
        \1 { grid(R, C, N) : numero(N) } 1 :- numero(R), numero(C).\n\
@@ -44,7 +102,7 @@ base = "numero(1..9).\n\
        \:- grid(R1, C1, N), grid(R2, C2, N), group(R1, R2), group(C1, C2), (R1, C1) != (R2, C2).\n"
 
 handleErr :: ExceptT String IO () -> ExceptT String IO ()
-handleErr = handleE (lift . putStrLn . ("An error has occured when running Sudoku:\n" ++)) . mapExceptT (handle worker)
+handleErr = flip catchE (lift . putStrLn . ("An error has occured when running Sudoku:\n" ++)) . mapExceptT (handle worker)
   where
     worker (e :: SomeException) = pure (Left (show e))
 
@@ -81,27 +139,3 @@ isSat n
   | n == 10 || n == 30 = Just True
   | n == 20            = Just False
   | otherwise          = Nothing
-
-main :: IO ()
-main = void . runExceptT . handleErr $ do
-  args <- lift getArgs
-  case args of
-    []      -> throwE "Please provide the Sudoku input!"
-    src : _ -> do
-      str                     <- lift $ readFile src
-      Board board             <- except $ parseBoard str
-      (file, handle)          <- lift $ openTempFile "./" "mmzk"
-      lift $ hClose handle
-      lift $ writeFile file base
-      forM_ (assocs board) $ \((r, c), mN) -> case mN of
-        Nothing -> pure ()
-        Just n  -> lift . appendFile file
-                 $ concat ["grid(", intercalate "," (show <$> [r, c, n]), ")."]
-      (exitCode, result, err) <- lift $ readProcessWithExitCode "clingo3" [file] ""
-      lift $ removeFile file
-      case exitCode of
-        ExitSuccess   -> except $ Left err
-        ExitFailure n -> case isSat n of
-          Just True  -> lift $ print (buildBoard $ parseResult result)
-          Just False -> lift $ putStrLn "No solution!"
-          Nothing    -> except $ Left err
