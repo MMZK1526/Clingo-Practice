@@ -11,6 +11,7 @@ import           Data.Char
 import           Data.List
 import           Data.List.Split
 import           Data.Maybe
+import qualified Data.Sequence as L
 import           System.Directory
 import           System.Environment
 import           System.Exit
@@ -57,15 +58,27 @@ main = void . runExceptT . handleErr $ do
         Nothing     -> putStrLn "No solution!"
         Just result -> print result
 
-genPuzzle :: StdGen -> ExceptT String IO (Maybe Board)
+-- genPuzzle :: StdGen -> ExceptT String IO (Maybe Board)
 genPuzzle gen = do
   let startBoard = mkRandomBoard gen
   mSolution <- solve startBoard
   case mSolution of
     Nothing       -> except $ Left "Generation failed due to unknown error."
     Just solution -> do
-      let initPoz    = [(x, y) | x <- [1..9], y <- [1..9]]
-      return $ Just solution
+      let initPoz = L.fromList [(x, y) | x <- [1..9], y <- [1..9]]
+      worker gen solution initPoz
+  where
+    worker gen (Board board) poz
+      | L.null poz = pure $ Board board
+      | otherwise  = do
+        let (ix, gen') = randomR (0, length poz - 1) gen
+        let pos        = poz `L.index` ix
+        let poz'       = L.deleteAt ix poz
+        let board'     = Board (board // [(pos, Nothing)])
+        result <- callClingo3 board' ["-n", "2"]
+        case length result of
+          1 -> worker gen' board' poz'
+          _ -> worker gen' (Board board) poz'
 
 callClingo3 :: Board -> [String] -> ExceptT String IO [String]
 callClingo3 (Board board) opts = do
@@ -82,7 +95,7 @@ callClingo3 (Board board) opts = do
     ExitSuccess   -> except $ Left err
     ExitFailure n -> case isSat n of
       Nothing -> except $ Left err
-      Just _  -> return $ splitOn "SATISFIABLE" result
+      Just _  -> return (tail $ splitOn "Answer:" result)
 
 solve :: Board -> ExceptT String IO (Maybe Board)
 solve board = do
