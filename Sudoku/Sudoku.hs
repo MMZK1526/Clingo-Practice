@@ -22,9 +22,17 @@ import qualified Text.Read as R
 
 newtype Board = Board (Array (Int, Int) (Maybe Int))
 
+data Difficulty = Easy | Medium | Hard | Insane
+
+toCount :: Difficulty -> Int
+toCount Easy    = 36
+toCount Medium = 30
+toCount Hard   = 25
+toCount Insane = 22
+
 instance Show Board where
   show :: Board -> String
-  show (Board board) = concatMap worker (assocs board)
+  show (Board b) = concatMap worker (assocs b)
     where
       worker ((r, c), mN) = pref ++ maybe "X" show mN
         where
@@ -58,34 +66,37 @@ main = void . runExceptT . handleErr $ do
         Nothing     -> putStrLn "No solution!"
         Just result -> print result
 
--- genPuzzle :: StdGen -> ExceptT String IO (Maybe Board)
-genPuzzle gen = do
+genPuzzle :: StdGen -> Int -> ExceptT String IO (Maybe Board)
+genPuzzle gen count = do
   let startBoard = mkRandomBoard gen
   mSolution <- solve startBoard
   case mSolution of
     Nothing       -> except $ Left "Generation failed due to unknown error."
     Just solution -> do
       let initPoz = L.fromList [(x, y) | x <- [1..9], y <- [1..9]]
-      worker gen solution initPoz
+      worker gen [(solution, initPoz)] 81
   where
-    worker gen (Board board) poz
-      | L.null poz = pure $ Board board
+    worker gen bpz@((Board b, poz) : bps) c
+      | c == count = pure $ Just (Board b)
+      | L.null poz = let backoff = length bpz `div` 2 + 1
+                     in  worker gen (drop backoff bpz) (c + backoff)
       | otherwise  = do
         let (ix, gen') = randomR (0, length poz - 1) gen
         let pos        = poz `L.index` ix
         let poz'       = L.deleteAt ix poz
-        let board'     = Board (board // [(pos, Nothing)])
+        let board'     = Board (b // [(pos, Nothing)])
         result <- callClingo3 board' ["-n", "2"]
         case length result of
-          1 -> worker gen' board' poz'
-          _ -> worker gen' (Board board) poz'
+          1 -> worker gen' ((board', poz') : bpz) (c - 1)
+          _ -> worker gen' ((Board b, poz') : bps) c
+    worker _ [] _ = pure Nothing
 
 callClingo3 :: Board -> [String] -> ExceptT String IO [String]
-callClingo3 (Board board) opts = do
+callClingo3 (Board b) opts = do
   (file, handle) <- lift $ openTempFile "./" "mmzk"
   lift $ hClose handle
   lift $ writeFile file base
-  forM_ (assocs board) $ \((r, c), mN) -> case mN of
+  forM_ (assocs b) $ \((r, c), mN) -> case mN of
     Nothing -> pure ()
     Just n  -> lift . appendFile file
               $ concat ["grid(", intercalate "," (show <$> [r, c, n]), ")."]
