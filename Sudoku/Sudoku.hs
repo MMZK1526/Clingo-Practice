@@ -7,6 +7,7 @@ import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.Except
 import           Data.Array
 import           Data.Array.ST
+import           Data.Bits
 import           Data.Char
 import           Data.List
 import           Data.List.Split
@@ -55,6 +56,8 @@ mkRandomBoard gen = Board $ runST $ do
 
 main :: IO ()
 main = void . runExceptT . handleErr $ do
+  -- result <- genPuzzle (mkStdGen 1526) 22
+  -- lift $ print result
   args <- lift getArgs
   case args of
     []      -> throwE "Please provide the Sudoku input!"
@@ -73,35 +76,47 @@ genPuzzle gen count = do
   case mSolution of
     Nothing       -> except $ Left "Generation failed due to unknown error."
     Just solution -> do
+      (file, handle) <- lift $ openTempFile "./" "mmzk"
+      lift $ hClose handle
       let initPoz = L.fromList [(x, y) | x <- [1..9], y <- [1..9]]
-      worker gen [(solution, initPoz)] 81
+      result <- worker (Just file) gen [(solution, initPoz)] 81 (1 :: Int)
+      lift $ removeFile file
+      return result
   where
-    worker gen bpz@((Board b, poz) : bps) c
-      | c == count = pure $ Just (Board b)
-      | L.null poz = let backoff = length bpz `div` 2 + 1
-                     in  worker gen (drop backoff bpz) (c + backoff)
+    worker file gen bpz@((Board b, poz) : bps) c bc
+      | c == count = do
+        lift (print c)
+        pure $ Just (Board b)
+      | L.null poz = let backoff = min ((1 + countTrailingZeros bc) * 5) (81 - c)
+                     in  lift (print (c, backoff)) >> worker file gen (drop backoff bpz) (c + backoff) (bc + 1)
       | otherwise  = do
         let (ix, gen') = randomR (0, length poz - 1) gen
         let pos        = poz `L.index` ix
         let poz'       = L.deleteAt ix poz
         let board'     = Board (b // [(pos, Nothing)])
-        result <- callClingo3 board' ["-n", "2"]
+        result <- callClingo3 file board' ["-n", "2"]
         case length result of
-          1 -> worker gen' ((board', poz') : bpz) (c - 1)
-          _ -> worker gen' ((Board b, poz') : bps) c
-    worker _ [] _ = pure Nothing
+          1 -> worker file gen' ((board', poz') : bpz) (c - 1) bc
+          _ -> worker file gen' ((Board b, poz') : bps) c bc
+    worker _ _ [] _ _ = pure Nothing
 
-callClingo3 :: Board -> [String] -> ExceptT String IO [String]
-callClingo3 (Board b) opts = do
-  (file, handle) <- lift $ openTempFile "./" "mmzk"
-  lift $ hClose handle
+callClingo3 :: Maybe FilePath -> Board -> [String] -> ExceptT String IO [String]
+callClingo3 mPath (Board b) opts = do
+  file <- case mPath of
+    Nothing   -> do
+      (file, handle) <- lift $ openTempFile "./" "mmzk"
+      lift $ hClose handle
+      return file
+    Just path -> pure path
   lift $ writeFile file base
   forM_ (assocs b) $ \((r, c), mN) -> case mN of
     Nothing -> pure ()
     Just n  -> lift . appendFile file
               $ concat ["grid(", intercalate "," (show <$> [r, c, n]), ")."]
   (exitCode, result, err) <- lift $ readProcessWithExitCode "clingo3" (file : opts) ""
-  lift $ removeFile file
+  case mPath of
+    Nothing -> lift $ removeFile file
+    Just _  -> pure ()
   case exitCode of
     ExitSuccess   -> except $ Left err
     ExitFailure n -> case isSat n of
@@ -110,7 +125,7 @@ callClingo3 (Board b) opts = do
 
 solve :: Board -> ExceptT String IO (Maybe Board)
 solve board = do
-  results <- callClingo3 board []
+  results <- callClingo3 Nothing board []
   return $ case results of
     []           -> Nothing
     solution : _ -> Just (buildBoard $ parseResult solution)
