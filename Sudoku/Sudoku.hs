@@ -86,7 +86,7 @@ options = [ Option "g" ["gen", "generate"] (OptArg calcDifficulty "easy")
           , Option "H" ["hard"] (NoArg $ OptDifficulty Hard)
                    "Shortcut for generating a hard Sudoku puzzle"
           , Option "I" ["insane"] (NoArg $ OptDifficulty Insane)
-                   "Shortcut for generating an insane Sudoku puzzle"
+                   "Shortcut for generating an insane Sudoku puzzle, it can take quite some time..."
           , Option "h" ["help"] (NoArg OptHelp)
                    "Prompt the help message" ]
   where
@@ -151,14 +151,15 @@ genPuzzle gen count = do
       (file, handle) <- lift $ openTempFile "./" "mmzk"
       lift $ hClose handle
       let initPoz = L.fromList [(x, y) | x <- [1..9], y <- [1..9]]
-      result <- worker (Just file) gen [(solution, initPoz)] 81 (1 :: Int)
+      result <- worker (Just file) gen [(solution, initPoz)] 81
       lift $ removeFile file
       return result
   where
-    worker file gen bpz@((Board b, poz) : bps) c bc
+    worker file gen bpz@((Board b, poz) : bps) c
       | c == count = pure $ Just (Board b)
-      | L.null poz = let backoff = min ((1 + countTrailingZeros bc) * 5) (81 - c)
-                     in  worker file gen (drop backoff bpz) (c + backoff) (bc + 1)
+      | L.null poz = let (bc :: Int, gen') = random gen
+                         backoff = min ((1 + countTrailingZeros bc) * 5) (81 - c)
+                     in  worker file gen' (drop backoff bpz) (c + backoff)
       | otherwise  = do
         let (ix, gen') = randomR (0, length poz - 1) gen
         let pos        = poz `L.index` ix
@@ -166,9 +167,9 @@ genPuzzle gen count = do
         let board'     = Board (b // [(pos, Nothing)])
         result <- callClingo3 file board' ["-n", "2"]
         case length result of
-          1 -> worker file gen' ((board', poz') : bpz) (c - 1) bc
-          _ -> worker file gen' ((Board b, poz') : bps) c bc
-    worker _ _ [] _ _ = pure Nothing
+          1 -> worker file gen' ((board', poz') : bpz) (c - 1)
+          _ -> worker file gen' ((Board b, poz') : bps) c
+    worker _ _ [] _ = pure Nothing
 
 callClingo3 :: Maybe FilePath -> Board -> [String] -> ExceptT String IO [String]
 callClingo3 mPath (Board b) opts = do
