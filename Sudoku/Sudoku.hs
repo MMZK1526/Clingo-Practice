@@ -85,7 +85,7 @@ options = [ Option "g" ["gen", "generate"] (OptArg calcDifficulty "easy")
                    "Shortcut for generating a medium Sudoku puzzle"
           , Option "H" ["hard"] (NoArg $ OptDifficulty Hard)
                    "Shortcut for generating a hard Sudoku puzzle"
-          , Option "I" ["insane"] (NoArg $ OptDifficulty Easy)
+          , Option "I" ["insane"] (NoArg $ OptDifficulty Insane)
                    "Shortcut for generating an insane Sudoku puzzle"
           , Option "h" ["help"] (NoArg OptHelp)
                    "Prompt the help message" ]
