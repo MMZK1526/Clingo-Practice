@@ -13,6 +13,7 @@ import           Data.List
 import           Data.List.Split
 import           Data.Maybe
 import qualified Data.Sequence as L
+import           System.Console.GetOpt
 import           System.Directory
 import           System.Environment
 import           System.Exit
@@ -24,12 +25,33 @@ import qualified Text.Read as R
 newtype Board = Board (Array (Int, Int) (Maybe Int))
 
 data Difficulty = Easy | Medium | Hard | Insane
+  deriving Enum
+
+data Opt    = OptDifficulty Difficulty | OptHelp
+data Config = CF { cfDifficulty :: Maybe Difficulty
+                 , cfHelp       :: Bool
+                 , cfError      :: Maybe String }
+
+emptyConfig :: Config
+emptyConfig = CF Nothing False Nothing
 
 toCount :: Difficulty -> Int
-toCount Easy    = 36
+toCount Easy   = 36
 toCount Medium = 30
 toCount Hard   = 25
 toCount Insane = 22
+
+toConfig :: [Opt] -> Config
+toConfig opts = case result of
+  Left err -> emptyConfig { cfError = Just err }
+  Right cf -> cf
+  -- foldl worker (CF Nothing False Nothing)
+  where
+    result = runExcept $ foldM worker emptyConfig opts
+    worker cf (OptDifficulty d)
+      | Nothing <- cfDifficulty cf = pure cf { cfDifficulty = Just d }
+      | otherwise                  = throwE "Arg Error: Multiple difficulty level provided"
+    worker cf OptHelp = pure $ cf { cfHelp = True }
 
 instance Show Board where
   show :: Board -> String
@@ -54,27 +76,58 @@ mkRandomBoard gen = Board $ runST $ do
   foldM_ worker gen [1..9]
   freeze arrST
 
+options :: [OptDescr Opt]
+options = [ Option "e" ["easy"] (NoArg $ OptDifficulty Easy)
+                   "Generate an easy Sudoku puzzle"
+          , Option "m" ["medium"] (NoArg $ OptDifficulty Medium)
+                   "Generate a medium Sudoku puzzle"
+          , Option "h" ["hard"] (NoArg $ OptDifficulty Hard)
+                   "Generate a hard Sudoku puzzle"
+          , Option "i" ["insane"] (NoArg $ OptDifficulty Hard)
+                   "Generate an insane Sudoku puzzle" ]
+
 main :: IO ()
 main = void . runExceptT . handleErr $ do
-  -- result <- genPuzzle (mkStdGen 1526) 22
-  -- lift $ print result
-  args <- lift getArgs
-  case args of
-    []      -> throwE "Please provide the Sudoku input!"
-    src : _ -> do
-      str     <- lift $ readFile src
-      board   <- except $ parseBoard str
-      mResult <- solve board
-      lift $ case mResult of
-        Nothing     -> putStrLn "No solution!"
-        Just result -> print result
+  rawArgs <- lift getArgs
+  let (opts, args, errs) = getOpt RequireOrder options rawArgs
+  unless (null errs) $ throwE (unlines errs)
+  let config             = toConfig opts
+  case cfError config of
+    Just err -> throwE err
+    Nothing  -> do
+      when (cfHelp config) $ lift (putStrLn $ usageInfo "Options:" options)
+      case cfDifficulty config of
+        Nothing -> case args of
+          []       -> throwE "Please provide the Sudoku input!"
+          [src]    -> do
+            str     <- lift $ readFile src
+            board   <- except $ parseBoard str
+            mResult <- solve board
+            lift $ case mResult of
+              Nothing     -> putStrLn "No solution!"
+              Just result -> print result
+          _ : rems -> throwE ("Surplus arguments: " ++ show rems)
+        Just d  -> case args of
+          _ : _ : rems -> throwE ("Surplus arguments: " ++ show rems)
+          _            -> do
+            rawGen <- getStdGen
+            let seed = fst $ random rawGen
+            let gen  = mkStdGen seed
+            lift $ putStrLn ("The seed is " ++ show seed ++ ".")
+            let gen' = snd $ randomR (0, fromEnum d) gen
+            mPuzzle <- genPuzzle gen (toCount d)
+            case mPuzzle of
+              Just puzzle -> lift $ case listToMaybe args of
+                Nothing   -> print puzzle
+                Just dest -> writeFile dest (show puzzle)
+              Nothing     -> throwE "Generation failed due to internal error."
 
 genPuzzle :: StdGen -> Int -> ExceptT String IO (Maybe Board)
 genPuzzle gen count = do
   let startBoard = mkRandomBoard gen
   mSolution <- solve startBoard
   case mSolution of
-    Nothing       -> except $ Left "Generation failed due to unknown error."
+    Nothing       -> pure Nothing
     Just solution -> do
       (file, handle) <- lift $ openTempFile "./" "mmzk"
       lift $ hClose handle
@@ -84,11 +137,9 @@ genPuzzle gen count = do
       return result
   where
     worker file gen bpz@((Board b, poz) : bps) c bc
-      | c == count = do
-        lift (print c)
-        pure $ Just (Board b)
+      | c == count = pure $ Just (Board b)
       | L.null poz = let backoff = min ((1 + countTrailingZeros bc) * 5) (81 - c)
-                     in  lift (print (c, backoff)) >> worker file gen (drop backoff bpz) (c + backoff) (bc + 1)
+                     in  worker file gen (drop backoff bpz) (c + backoff) (bc + 1)
       | otherwise  = do
         let (ix, gen') = randomR (0, length poz - 1) gen
         let pos        = poz `L.index` ix
@@ -118,9 +169,9 @@ callClingo3 mPath (Board b) opts = do
     Nothing -> lift $ removeFile file
     Just _  -> pure ()
   case exitCode of
-    ExitSuccess   -> except $ Left err
+    ExitSuccess   -> throwE err
     ExitFailure n -> case isSat n of
-      Nothing -> except $ Left err
+      Nothing -> throwE err
       Just _  -> return (tail $ splitOn "Answer:" result)
 
 solve :: Board -> ExceptT String IO (Maybe Board)
