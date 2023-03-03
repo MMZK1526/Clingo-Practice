@@ -27,7 +27,7 @@ newtype Board = Board (Array (Int, Int) (Maybe Int))
 data Difficulty = Easy | Medium | Hard | Insane
   deriving Enum
 
-data Opt    = OptDifficulty Difficulty | OptHelp
+data Opt    = OptDifficulty Difficulty | OptHelp | OptError String
 data Config = CF { cfDifficulty :: Maybe Difficulty
                  , cfHelp       :: Bool
                  , cfError      :: Maybe String }
@@ -45,13 +45,13 @@ toConfig :: [Opt] -> Config
 toConfig opts = case result of
   Left err -> emptyConfig { cfError = Just err }
   Right cf -> cf
-  -- foldl worker (CF Nothing False Nothing)
   where
     result = runExcept $ foldM worker emptyConfig opts
     worker cf (OptDifficulty d)
       | Nothing <- cfDifficulty cf = pure cf { cfDifficulty = Just d }
       | otherwise                  = throwE "Arg Error: Multiple difficulty level provided"
-    worker cf OptHelp = pure $ cf { cfHelp = True }
+    worker cf OptHelp           = pure $ cf { cfHelp = True }
+    worker cf (OptError errMsg) = throwE errMsg
 
 instance Show Board where
   show :: Board -> String
@@ -77,14 +77,21 @@ mkRandomBoard gen = Board $ runST $ do
   freeze arrST
 
 options :: [OptDescr Opt]
-options = [ Option "e" ["easy"] (NoArg $ OptDifficulty Easy)
-                   "Generate an easy Sudoku puzzle"
-          , Option "m" ["medium"] (NoArg $ OptDifficulty Medium)
-                   "Generate a medium Sudoku puzzle"
-          , Option "h" ["hard"] (NoArg $ OptDifficulty Hard)
-                   "Generate a hard Sudoku puzzle"
-          , Option "i" ["insane"] (NoArg $ OptDifficulty Hard)
-                   "Generate an insane Sudoku puzzle" ]
+options = [ Option "g" ["gen", "generate"] (OptArg calcDifficulty "easy")
+                   "Generate a Sudoku puzzle. The difficulty levels can be 'easy', 'medium', 'hard', or 'insane"
+          , Option "h" ["help"] (NoArg OptHelp)
+                   "Prompt the help message" ]
+  where
+    calcDifficulty Nothing    = OptDifficulty Easy
+    calcDifficulty (Just str) = case str of
+      "easy"   -> OptDifficulty Easy
+      "medium" -> OptDifficulty Medium
+      "hard"   -> OptDifficulty Hard
+      "insane" -> OptDifficulty Insane
+      str      -> OptError $ "Arg Error: Unrecognised difficulty " ++ str
+
+helpMsg :: String
+helpMsg = unlines ["Usage:", "  ./Sudoku <Option> (<input.txt> | <output.txt>)", usageInfo "Options:" options]
 
 main :: IO ()
 main = void . runExceptT . handleErr $ do
@@ -95,10 +102,10 @@ main = void . runExceptT . handleErr $ do
   case cfError config of
     Just err -> throwE err
     Nothing  -> do
-      when (cfHelp config) $ lift (putStrLn $ usageInfo "Options:" options)
+      when (cfHelp config) $ lift (putStrLn helpMsg)
       case cfDifficulty config of
         Nothing -> case args of
-          []       -> throwE "Please provide the Sudoku input!"
+          []       -> unless (cfHelp config) $ throwE "Please provide the Sudoku input!"
           [src]    -> do
             str     <- lift $ readFile src
             board   <- except $ parseBoard str
