@@ -78,15 +78,27 @@ mkRandomBoard gen = Board $ runST $ do
 
 options :: [OptDescr Opt]
 options = [ Option "g" ["gen", "generate"] (OptArg calcDifficulty "easy")
-                   "Generate a Sudoku puzzle. The difficulty levels can be 'easy', 'medium', 'hard', or 'insane"
+                   "Generate a Sudoku puzzle. The difficulty levels can be 'easy', 'medium', 'hard', or 'insane'"
+          , Option "E" ["easy"] (NoArg $ OptDifficulty Easy)
+                   "Shortcut for generating an easy Sudoku puzzle"
+          , Option "M" ["medium"] (NoArg $ OptDifficulty Medium)
+                   "Shortcut for generating a medium Sudoku puzzle"
+          , Option "H" ["hard"] (NoArg $ OptDifficulty Hard)
+                   "Shortcut for generating a hard Sudoku puzzle"
+          , Option "I" ["insane"] (NoArg $ OptDifficulty Easy)
+                   "Shortcut for generating an insane Sudoku puzzle"
           , Option "h" ["help"] (NoArg OptHelp)
                    "Prompt the help message" ]
   where
     calcDifficulty Nothing    = OptDifficulty Easy
-    calcDifficulty (Just str) = case str of
+    calcDifficulty (Just str) = case toLower <$> str of
+      "e"      -> OptDifficulty Easy
       "easy"   -> OptDifficulty Easy
+      "m"      -> OptDifficulty Medium
       "medium" -> OptDifficulty Medium
+      "h"      -> OptDifficulty Hard
       "hard"   -> OptDifficulty Hard
+      "i"      -> OptDifficulty Insane
       "insane" -> OptDifficulty Insane
       str      -> OptError $ "Arg Error: Unrecognised difficulty " ++ str
 
